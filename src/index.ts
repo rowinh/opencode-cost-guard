@@ -13,6 +13,29 @@ import { readFileSync, existsSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
 
+// ─── Logging ──────────────────────────────────────────────────────────────────
+
+/**
+ * Verbose debug logging is opt-in via COST_GUARD_DEBUG=1.
+ * Warnings and errors always print regardless of this flag.
+ */
+const DEBUG = process.env.COST_GUARD_DEBUG === "1"
+
+const log = {
+  /** Always printed — startup confirmation and real errors only. */
+  info:  (msg: string) => console.info(`[cost-guard] ${msg}`),
+  /** Always printed — something the user should act on. */
+  warn:  (msg: string, err?: unknown) => err
+    ? console.warn(`[cost-guard] ${msg}`, err)
+    : console.warn(`[cost-guard] ${msg}`),
+  /** Always printed — unexpected failures. */
+  error: (msg: string, err?: unknown) => err
+    ? console.error(`[cost-guard] ${msg}`, err)
+    : console.error(`[cost-guard] ${msg}`),
+  /** Printed only when COST_GUARD_DEBUG=1 — high-frequency / verbose lines. */
+  debug: (msg: string) => { if (DEBUG) console.info(`[cost-guard] ${msg}`) },
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CostGuardConfig {
@@ -55,8 +78,8 @@ export function loadConfig(projectDirectory: string): CostGuardConfig {
 
     try {
       const raw = readFileSync(configPath, "utf-8")
-        .replace(/\/\/[^\n]*/g, "")   // strip // line comments
-        .replace(/\/\*[\s\S]*?\*\//g, "") // strip /* block comments */
+        .replace(/\/\/[^\n]*/g, "")        // strip // line comments
+        .replace(/\/\*[\s\S]*?\*\//g, "")  // strip /* block comments */
       const parsed = JSON.parse(raw) as Partial<CostGuardConfig>
       const config: CostGuardConfig = { ...DEFAULTS }
 
@@ -73,14 +96,14 @@ export function loadConfig(projectDirectory: string): CostGuardConfig {
       if (parsed.mode === "warn" || parsed.mode === "block")
         config.mode = parsed.mode
 
-      console.info(`[cost-guard] Config loaded from: ${configPath}`)
+      log.debug(`Config loaded from: ${configPath}`)
       return config
     } catch (err) {
-      console.warn(`[cost-guard] Failed to read ${configPath}:`, err)
+      log.warn(`Failed to read ${configPath}:`, err)
     }
   }
 
-  console.info(`[cost-guard] No config file found (checked: ${candidates.join(", ")}), using defaults.`)
+  log.debug(`No config file found (checked: ${candidates.join(", ")}), using defaults.`)
   return { ...DEFAULTS }
 }
 
@@ -105,7 +128,7 @@ async function sendMessage(
       body: { noReply: true, parts: [{ type: "text", text }] },
     })
   } catch (err) {
-    console.warn(`[cost-guard] Failed to send message to session ${sessionId}:`, err)
+    log.warn(`Failed to send message to session ${sessionId}:`, err)
   }
 }
 
@@ -114,9 +137,11 @@ async function sendMessage(
 export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
   const cfg = loadConfig(directory)
 
-  console.info(
-    `[cost-guard] Active — limit: ${fmt(cfg.maxCostUsd)} | ` +
-    `warn at: ${cfg.warnAtPercent}% | mode: ${cfg.mode}`
+  // Always printed — one line at startup so the user can confirm active config.
+  log.info(
+    `Active — limit: ${fmt(cfg.maxCostUsd)} | ` +
+    `warn at: ${cfg.warnAtPercent}% | mode: ${cfg.mode}` +
+    (DEBUG ? " | debug: on" : "")
   )
 
   // Track per-session state to avoid duplicate messages
@@ -130,7 +155,7 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
 
       const sessionId = (event as EventSessionIdle).properties.sessionID
 
-      console.info(`[cost-guard] session.idle received — sessionId: ${sessionId ?? "(none)"}`)
+      log.debug(`session.idle received — sessionId: ${sessionId ?? "(none)"}`)
 
       if (!sessionId || blockedSessions.has(sessionId)) return
 
@@ -143,9 +168,9 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
           for (const { info } of messages) {
             if (info.role === "assistant") cost += info.cost
           }
-          console.info(`[cost-guard] session ${sessionId} — messages: ${messages.length}, cost: ${fmt(cost)}, limit: ${fmt(cfg.maxCostUsd)}`)
+          log.debug(`session ${sessionId} — messages: ${messages.length}, cost: ${fmt(cost)}, limit: ${fmt(cfg.maxCostUsd)}`)
         } catch (err) {
-          console.warn(`[cost-guard] Could not fetch messages for session ${sessionId}:`, err)
+          log.warn(`Could not fetch messages for session ${sessionId}:`, err)
           return
         }
 
@@ -191,7 +216,7 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
         }
       } catch (err) {
         // Defensive catch — an unexpected error must not silence future events
-        console.error(`[cost-guard] Unexpected error in event handler (session ${sessionId}):`, err)
+        log.error(`Unexpected error in event handler (session ${sessionId}):`, err)
       }
     },
   }

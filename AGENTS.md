@@ -10,7 +10,7 @@ A single-file TypeScript OpenCode plugin (`src/index.ts`). The compiled output (
 
 - Node pinned to **24.14.1** via `.tool-versions` (asdf). Run `make env` on a fresh clone.
 - `package-lock.json` is committed. Always use `npm ci`, not `npm install`, unless regenerating the lockfile.
-- No `.env` file or environment variables required.
+- One optional runtime env var: `COST_GUARD_DEBUG=1` enables verbose per-event logs. Not required for normal use.
 
 ---
 

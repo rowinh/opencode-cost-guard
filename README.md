@@ -93,18 +93,29 @@ Two in-memory `Set` objects track which sessions have already received a warning
 
 ## Startup log
 
-When the plugin loads, it prints its active configuration to the console:
+The plugin always prints one line at startup confirming the active configuration:
 
 ```
-[cost-guard] Config loaded from: /home/user/.config/opencode/cost-guard.config.json
 [cost-guard] Active — limit: $20.0000 | warn at: 80% | mode: warn
 ```
 
-If no config file is found, you will see:
+That is the only log line produced during normal operation. Warnings and errors always print regardless.
+
+### Debug logging
+
+Set `COST_GUARD_DEBUG=1` to enable verbose per-event logs — useful when diagnosing why a threshold isn't firing:
 
 ```
-[cost-guard] No config file found, using defaults.
-[cost-guard] Active — limit: $20.0000 | warn at: 80% | mode: warn
+[cost-guard] Active — limit: $2.0000 | warn at: 80% | mode: warn | debug: on
+[cost-guard] Config loaded from: /Users/you/.config/opencode/cost-guard.config.json
+[cost-guard] session.idle received — sessionId: abc123
+[cost-guard] session abc123 — messages: 4, cost: $1.6400, limit: $2.0000
+```
+
+To set the variable for an OpenCode session launched from the terminal:
+
+```bash
+COST_GUARD_DEBUG=1 opencode
 ```
 
 ---
