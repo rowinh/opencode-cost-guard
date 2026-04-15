@@ -1,6 +1,6 @@
 {
   "name": "opencode-cost-guard",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "OpenCode plugin — monitors session cost and triggers warnings or stops when a configurable threshold is reached",
   "keywords": [
     "opencode",
