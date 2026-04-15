@@ -189,6 +189,13 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
   }
 }
 
-// PluginModule shape required by the OpenCode plugin loader
-export const server = CostGuardPlugin
-export default CostGuardPlugin
+// PluginModule shape required by the OpenCode plugin loader.
+// The loader reads mod.default.server — a plain-object default export
+// with a server property. Exporting CostGuardPlugin directly as the
+// default causes the legacy fallback to call every named export as a
+// plugin, including loadConfig(), which crashes with a type error.
+const plugin: import("@opencode-ai/plugin").PluginModule = {
+  server: CostGuardPlugin,
+}
+
+export default plugin
