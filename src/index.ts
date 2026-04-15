@@ -15,7 +15,7 @@ import { join } from "path"
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CostGuardConfig {
-  /** Cost limit in USD. Session triggers an alert when this is exceeded. Default: 2.0 */
+  /** Cost limit in USD. Session triggers an alert when this is exceeded. Default: 20.0 */
   maxCostUsd: number
   /** Percentage of maxCostUsd at which an early warning fires. 0 to disable. Default: 80 */
   warnAtPercent: number
@@ -85,15 +85,24 @@ export function loadConfig(projectDirectory: string): CostGuardConfig {
 const fmt = (usd: number) => `$${usd.toFixed(4)}`
 const pct = (cost: number, max: number) => Math.round((cost / max) * 100)
 
+/**
+ * Injects a plain-text message into the session chat.
+ * Errors are logged and swallowed — a failed notification must never
+ * crash the event handler or suppress future cost checks.
+ */
 async function sendMessage(
   client: any,
   sessionId: string,
   text: string
 ): Promise<void> {
-  await client.session.prompt({
-    path: { id: sessionId },
-    body: { noReply: true, parts: [{ type: "text", text }] },
-  })
+  try {
+    await client.session.prompt({
+      path: { id: sessionId },
+      body: { noReply: true, parts: [{ type: "text", text }] },
+    })
+  } catch (err) {
+    console.warn(`[cost-guard] Failed to send message to session ${sessionId}:`, err)
+  }
 }
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
@@ -119,57 +128,62 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
 
       if (!sessionId || blockedSessions.has(sessionId)) return
 
-      // Sum cost across all assistant messages in the session
-      let cost = 0
       try {
-        const resp = await client.session.messages({ path: { id: sessionId } })
-        for (const { info } of resp.data ?? []) {
-          if (info.role === "assistant") cost += info.cost
+        // Sum cost across all assistant messages in the session
+        let cost = 0
+        try {
+          const resp = await client.session.messages({ path: { id: sessionId } })
+          for (const { info } of resp.data ?? []) {
+            if (info.role === "assistant") cost += info.cost
+          }
+        } catch (err) {
+          console.warn(`[cost-guard] Could not fetch messages for session ${sessionId}:`, err)
+          return
         }
-      } catch {
-        // SDK temporarily unavailable — skip silently
-        return
-      }
 
-      const { maxCostUsd, warnAtPercent, mode } = cfg
-      const warnThreshold = maxCostUsd * (warnAtPercent / 100)
+        const { maxCostUsd, warnAtPercent, mode } = cfg
+        const warnThreshold = maxCostUsd * (warnAtPercent / 100)
 
-      // ── Limit reached ────────────────────────────────────────────────────────
-      if (cost >= maxCostUsd) {
-        blockedSessions.add(sessionId)
+        // ── Limit reached ──────────────────────────────────────────────────────
+        if (cost >= maxCostUsd) {
+          blockedSessions.add(sessionId)
 
-        const msg =
-          mode === "block"
-            ? [
-                `⛔ **COST LIMIT REACHED** — Session automatically stopped.`,
-                `Cost: ${fmt(cost)} / Limit: ${fmt(maxCostUsd)} (${pct(cost, maxCostUsd)}%)`,
-                ``,
-                `This session will no longer respond to new requests.`,
-                `Start a new session to continue working.`,
-              ].join("\n")
-            : [
-                `⛔ **COST LIMIT REACHED** — Cost: ${fmt(cost)} / ${fmt(maxCostUsd)} (${pct(cost, maxCostUsd)}%)`,
-                ``,
-                `Configured limit reached. Consider starting a new session or`,
-                `update "maxCostUsd" in ${CONFIG_FILENAME}.`,
-              ].join("\n")
+          const msg =
+            mode === "block"
+              ? [
+                  `⛔ **COST LIMIT REACHED** — Session automatically stopped.`,
+                  `Cost: ${fmt(cost)} / Limit: ${fmt(maxCostUsd)} (${pct(cost, maxCostUsd)}%)`,
+                  ``,
+                  `This session will no longer respond to new requests.`,
+                  `Start a new session to continue working.`,
+                ].join("\n")
+              : [
+                  `⛔ **COST LIMIT REACHED** — Cost: ${fmt(cost)} / ${fmt(maxCostUsd)} (${pct(cost, maxCostUsd)}%)`,
+                  ``,
+                  `Configured limit reached. Consider starting a new session or`,
+                  `update "maxCostUsd" in ${CONFIG_FILENAME}.`,
+                ].join("\n")
 
-        await sendMessage(client, sessionId, msg)
-        return
-      }
+          await sendMessage(client, sessionId, msg)
+          return
+        }
 
-      // ── Early warning (fired once per session) ────────────────────────────────
-      if (
-        warnAtPercent > 0 &&
-        cost >= warnThreshold &&
-        !warnedSessions.has(sessionId)
-      ) {
-        warnedSessions.add(sessionId)
+        // ── Early warning (fired once per session) ─────────────────────────────
+        if (
+          warnAtPercent > 0 &&
+          cost >= warnThreshold &&
+          !warnedSessions.has(sessionId)
+        ) {
+          warnedSessions.add(sessionId)
 
-        await sendMessage(client, sessionId, [
-          `⚠️  **COST WARNING** — ${pct(cost, maxCostUsd)}% of budget used.`,
-          `Cost: ${fmt(cost)} — Limit: ${fmt(maxCostUsd)} — Remaining: ${fmt(maxCostUsd - cost)}`,
-        ].join("\n"))
+          await sendMessage(client, sessionId, [
+            `⚠️  **COST WARNING** — ${pct(cost, maxCostUsd)}% of budget used.`,
+            `Cost: ${fmt(cost)} — Limit: ${fmt(maxCostUsd)} — Remaining: ${fmt(maxCostUsd - cost)}`,
+          ].join("\n"))
+        }
+      } catch (err) {
+        // Defensive catch — an unexpected error must not silence future events
+        console.error(`[cost-guard] Unexpected error in event handler (session ${sessionId}):`, err)
       }
     },
   }
