@@ -10,6 +10,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import type { EventSessionIdle } from "@opencode-ai/sdk"
 import { readFileSync, existsSync } from "fs"
+import { homedir } from "os"
 import { join } from "path"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ const CONFIG_FILENAME = "cost-guard.config.json"
 export function loadConfig(projectDirectory: string): CostGuardConfig {
   const candidates = [
     join(projectDirectory, ".opencode", CONFIG_FILENAME),
-    join(process.env.HOME ?? "", ".config", "opencode", CONFIG_FILENAME),
+    join(homedir(), ".config", "opencode", CONFIG_FILENAME),
   ]
 
   for (const configPath of candidates) {
@@ -76,7 +77,7 @@ export function loadConfig(projectDirectory: string): CostGuardConfig {
     }
   }
 
-  console.info("[cost-guard] No config file found, using defaults.")
+  console.info(`[cost-guard] No config file found (checked: ${candidates.join(", ")}), using defaults.`)
   return { ...DEFAULTS }
 }
 
