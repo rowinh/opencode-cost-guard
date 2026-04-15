@@ -126,6 +126,8 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
 
       const sessionId = (event as EventSessionIdle).properties.sessionID
 
+      console.info(`[cost-guard] session.idle received — sessionId: ${sessionId ?? "(none)"}`)
+
       if (!sessionId || blockedSessions.has(sessionId)) return
 
       try {
@@ -133,9 +135,11 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
         let cost = 0
         try {
           const resp = await client.session.messages({ path: { id: sessionId } })
-          for (const { info } of resp.data ?? []) {
+          const messages = resp.data ?? []
+          for (const { info } of messages) {
             if (info.role === "assistant") cost += info.cost
           }
+          console.info(`[cost-guard] session ${sessionId} — messages: ${messages.length}, cost: ${fmt(cost)}, limit: ${fmt(cfg.maxCostUsd)}`)
         } catch (err) {
           console.warn(`[cost-guard] Could not fetch messages for session ${sessionId}:`, err)
           return
