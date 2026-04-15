@@ -39,7 +39,7 @@ assignees: ""
 
 ```json
 {
-  "maxCostUsd": 2.0,
+  "maxCostUsd": 20.0,
   "warnAtPercent": 80,
   "mode": "warn"
 }

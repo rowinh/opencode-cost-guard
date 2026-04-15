@@ -53,8 +53,8 @@ Create a config file — loaded once at plugin initialisation, no restart requir
 ```jsonc
 {
   // Cost limit in USD. Triggers an alert when exceeded.
-  // Default: 2.0
-  "maxCostUsd": 2.0,
+  // Default: 20.0
+  "maxCostUsd": 20.0,
 
   // Percentage of maxCostUsd at which an early warning fires.
   // Set to 0 to disable the early warning entirely.
@@ -68,7 +68,7 @@ Create a config file — loaded once at plugin initialisation, no restart requir
 }
 ```
 
-If no config file is found, built-in defaults apply (`$2.00` limit, `80%` warning, `warn` mode).
+If no config file is found, built-in defaults apply (`$20.00` limit, `80%` warning, `warn` mode).
 
 ---
 
@@ -99,14 +99,14 @@ When the plugin loads, it prints its active configuration to the console:
 
 ```
 [cost-guard] Config loaded from: /home/user/.config/opencode/cost-guard.config.json
-[cost-guard] Active — limit: $2.0000 | warn at: 80% | mode: warn
+[cost-guard] Active — limit: $20.0000 | warn at: 80% | mode: warn
 ```
 
 If no config file is found, you will see:
 
 ```
 [cost-guard] No config file found, using defaults.
-[cost-guard] Active — limit: $2.0000 | warn at: 80% | mode: warn
+[cost-guard] Active — limit: $20.0000 | warn at: 80% | mode: warn
 ```
 
 ---
@@ -117,13 +117,13 @@ If no config file is found, you will see:
 
 ```
 ⚠️  **COST WARNING** — 82% of budget used.
-Cost: $1.6400 — Limit: $2.0000 — Remaining: $0.3600
+Cost: $16.4000 — Limit: $20.0000 — Remaining: $3.6000
 ```
 
 **Limit reached — `warn` mode**
 
 ```
-⛔ **COST LIMIT REACHED** — Cost: $2.0031 / $2.0000 (100%)
+⛔ **COST LIMIT REACHED** — Cost: $20.0031 / $20.0000 (100%)
 
 Configured limit reached. Consider starting a new session or
 update "maxCostUsd" in cost-guard.config.json.
@@ -133,7 +133,7 @@ update "maxCostUsd" in cost-guard.config.json.
 
 ```
 ⛔ **COST LIMIT REACHED** — Session automatically stopped.
-Cost: $2.0031 / Limit: $2.0000 (100%)
+Cost: $20.0031 / Limit: $20.0000 (100%)
 
 This session will no longer respond to new requests.
 Start a new session to continue working.
@@ -148,13 +148,13 @@ git clone https://github.com/jjmartres/opencode-cost-guard.git
 cd opencode-cost-guard
 
 make env      # install pinned Node (via asdf) + npm deps
-make build    # compile TypeScript → dist/
 make check    # type-check without emitting files
+make build    # compile TypeScript → dist/
 make dev      # watch mode — recompiles on save
 make clean    # remove dist/
 ```
 
-Run `make` with no arguments to see all available targets. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow including release steps.
+Run `make` with no arguments to see all available targets, including `bump` for version management and `release-*` for publishing. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow.
 
 ### Testing locally
 
