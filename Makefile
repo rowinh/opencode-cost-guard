@@ -182,8 +182,9 @@ _write-changelog:
 	while IFS= read -r line; do \
 	  msg=$$(echo "$$line" | sed 's/^[a-f0-9]* //'); \
 	  hash=$$(echo "$$line" | awk '{print $$1}'); \
-	  prefix=$$(echo "$$msg" | sed -n 's/^\([a-z]*\)[:(].*/\1/p'); \
-	  clean=$$(echo "$$msg" | sed 's/^[a-z]*([^)]*): //;s/^[a-z]*: //'); \
+	  stripped=$$(echo "$$msg" | sed 's/^[^a-zA-Z]*//' ); \
+	  prefix=$$(echo "$$stripped" | sed -n 's/^\([a-z]*\)[:(].*/\1/p'); \
+	  clean=$$(echo "$$stripped" | sed 's/^[a-z]*([^)]*): //;s/^[a-z]*: //'); \
 	  entry="- $$clean ($$hash)"; \
 	  case "$$prefix" in \
 	    feat)              ADDED="$$ADDED\n$$entry" ;; \
@@ -227,6 +228,8 @@ release-major: _require-clean-tree _require-node ## Bump major + CHANGELOG (1.0.
 	@$(MAKE) --no-print-directory _do-release BUMP=major
 
 _do-release:
+	@# patch: lightweight — no CHANGELOG, bump/commit/tag inline
+	@# minor/major: delegate entirely to bump (which owns its own clean-tree check)
 	@if [ "$(BUMP)" = "patch" ]; then \
 	  printf '$(BOLD)$(GREEN)» Bumping patch version from $(PACKAGE_VER)…$(RESET)\n'; \
 	  npm version patch --no-git-tag-version --no-commit-hooks > /dev/null; \
@@ -235,14 +238,18 @@ _do-release:
 	  git add package.json package-lock.json; \
 	  git commit -m "chore(release): v$$NEW_VER"; \
 	  git tag -a "v$$NEW_VER" -m "v$$NEW_VER"; \
+	  printf '$(BOLD)$(GREEN)» Pushing v$$NEW_VER…$(RESET)\n'; \
+	  git push && git push --tags; \
+	  printf '\n$(BOLD)$(GREEN)✓ Released v$$NEW_VER$(RESET)\n'; \
+	  printf '  CI will publish to npm once the tag build passes.\n\n'; \
 	else \
 	  $(MAKE) --no-print-directory bump BUMP=$(BUMP); \
 	  NEW_VER=$$(node -p "require('./package.json').version"); \
-	fi; \
-	printf '$(BOLD)$(GREEN)» Pushing v$$NEW_VER…$(RESET)\n'; \
-	git push && git push --tags; \
-	printf '\n$(BOLD)$(GREEN)✓ Released v$$NEW_VER$(RESET)\n'; \
-	printf '  CI will publish to npm once the tag build passes.\n\n'
+	  printf '$(BOLD)$(GREEN)» Pushing v$$NEW_VER…$(RESET)\n'; \
+	  git push && git push --tags; \
+	  printf '\n$(BOLD)$(GREEN)✓ Released v$$NEW_VER$(RESET)\n'; \
+	  printf '  CI will publish to npm once the tag build passes.\n\n'; \
+	fi
 
 # =============================================================================
 # GUARDS — internal prerequisite checks
