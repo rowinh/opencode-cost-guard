@@ -189,4 +189,6 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
   }
 }
 
+// PluginModule shape required by the OpenCode plugin loader
+export const server = CostGuardPlugin
 export default CostGuardPlugin
