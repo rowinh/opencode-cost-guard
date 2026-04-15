@@ -50,25 +50,23 @@ Create a config file — loaded once at plugin initialisation, no restart requir
 
 ### Config reference
 
-```jsonc
+The file must be valid JSON — comments are stripped before parsing so `//` and `/* */` comments are accepted, but trailing commas are not.
+
+| Key             | Type              | Default  | Description                                                    |
+| --------------- | ----------------- | -------- | -------------------------------------------------------------- |
+| `maxCostUsd`    | number            | `20.0`   | Cost limit in USD. Alert fires when this is exceeded.          |
+| `warnAtPercent` | number (0 – 100)  | `80`     | Early warning threshold as a % of `maxCostUsd`. `0` to disable.|
+| `mode`          | `"warn"` \| `"block"` | `"warn"` | `warn` — injects a message. `block` — marks the session stopped. |
+
+```json
 {
-  // Cost limit in USD. Triggers an alert when exceeded.
-  // Default: 20.0
   "maxCostUsd": 20.0,
-
-  // Percentage of maxCostUsd at which an early warning fires.
-  // Set to 0 to disable the early warning entirely.
-  // Default: 80
   "warnAtPercent": 80,
-
-  // "warn"  → sends a warning message in the session (non-blocking)
-  // "block" → sends a message and marks the session as stopped
-  // Default: "warn"
   "mode": "warn"
 }
 ```
 
-If no config file is found, built-in defaults apply (`$20.00` limit, `80%` warning, `warn` mode).
+If no config file is found, the built-in defaults above apply.
 
 ---
 

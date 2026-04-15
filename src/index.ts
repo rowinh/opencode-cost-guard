@@ -54,7 +54,10 @@ export function loadConfig(projectDirectory: string): CostGuardConfig {
     if (!existsSync(configPath)) continue
 
     try {
-      const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as Partial<CostGuardConfig>
+      const raw = readFileSync(configPath, "utf-8")
+        .replace(/\/\/[^\n]*/g, "")   // strip // line comments
+        .replace(/\/\*[\s\S]*?\*\//g, "") // strip /* block comments */
+      const parsed = JSON.parse(raw) as Partial<CostGuardConfig>
       const config: CostGuardConfig = { ...DEFAULTS }
 
       if (typeof parsed.maxCostUsd === "number" && parsed.maxCostUsd > 0)
