@@ -8,6 +8,7 @@
  */
 
 import type { Plugin } from "@opencode-ai/plugin"
+import type { EventSessionIdle } from "@opencode-ai/sdk"
 import { readFileSync, existsSync } from "fs"
 import { join } from "path"
 
@@ -114,16 +115,17 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
       // Only act after the model has finished responding
       if (event.type !== "session.idle") return
 
-      const sessionId: string | undefined =
-        (event as any).properties?.info?.id
+      const sessionId = (event as EventSessionIdle).properties.sessionID
 
       if (!sessionId || blockedSessions.has(sessionId)) return
 
-      // Fetch current session cost via SDK
+      // Sum cost across all assistant messages in the session
       let cost = 0
       try {
-        const resp = await client.session.get({ path: { id: sessionId } })
-        cost = resp.data?.cost ?? 0
+        const resp = await client.session.messages({ path: { id: sessionId } })
+        for (const { info } of resp.data ?? []) {
+          if (info.role === "assistant") cost += info.cost
+        }
       } catch {
         // SDK temporarily unavailable — skip silently
         return
