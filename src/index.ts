@@ -198,7 +198,10 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
 // with a server property. Exporting CostGuardPlugin directly as the
 // default causes the legacy fallback to call every named export as a
 // plugin, including loadConfig(), which crashes with a type error.
+// id is mandatory for file:// plugins; for npm plugins it falls back
+// to package.json#name, but having it explicit covers both load paths.
 const plugin: import("@opencode-ai/plugin").PluginModule = {
+  id: "opencode-cost-guard",
   server: CostGuardPlugin,
 }
 
