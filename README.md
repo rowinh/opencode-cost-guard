@@ -1,0 +1,184 @@
+# opencode-cost-guard
+
+An [OpenCode](https://opencode.ai) plugin that monitors session cost in real time and fires a **warning** or **stop** message when a configurable spending threshold is reached.
+
+> **Why?** OpenCode has no built-in per-session cost limit. This plugin fills that gap while a [native feature](https://github.com/sst/opencode/issues/4559) is still pending.
+
+---
+
+## Features
+
+- ⚠️ **Early warning** at a configurable percentage of the budget (e.g. 80%)
+- ⛔ **Limit alert** when the session cost exceeds the threshold
+- 🔇 **No spam** — each message fires at most once per session
+- 🗂️ **Per-project config** — override the global limit for individual repositories
+- 🔌 **Zero friction** — install via npm, one line in `opencode.json`
+
+---
+
+## Installation
+
+Add the package name to the `plugins` array in your OpenCode config:
+
+```jsonc
+// ~/.config/opencode/opencode.json  (global)
+// or .opencode/opencode.json        (per-project)
+{
+  "plugins": ["opencode-cost-guard"]
+}
+```
+
+OpenCode resolves and installs the plugin from npm on startup.
+
+---
+
+## Configuration
+
+Create a config file — loaded once at plugin initialisation, no restart required.
+
+### Global config
+
+```
+~/.config/opencode/cost-guard.config.json
+```
+
+### Per-project override (takes priority over global)
+
+```
+<project-root>/.opencode/cost-guard.config.json
+```
+
+### Config reference
+
+```jsonc
+{
+  // Cost limit in USD. Triggers an alert when exceeded.
+  // Default: 2.0
+  "maxCostUsd": 2.0,
+
+  // Percentage of maxCostUsd at which an early warning fires.
+  // Set to 0 to disable the early warning entirely.
+  // Default: 80
+  "warnAtPercent": 80,
+
+  // "warn"  → sends a warning message in the session (non-blocking)
+  // "block" → sends a message and marks the session as stopped
+  // Default: "warn"
+  "mode": "warn"
+}
+```
+
+If no config file is found, built-in defaults apply (`$2.00` limit, `80%` warning, `warn` mode).
+
+---
+
+## How it works
+
+The plugin hooks into the `session.idle` event, which fires after every model response. It then:
+
+1. Reads the session ID from the event payload
+2. Fetches the current cumulative cost via the OpenCode SDK
+3. Compares it against the configured thresholds
+4. Injects a formatted warning or stop message into the chat if needed
+
+Because it acts **after** each response (not before), it cannot intercept a request mid-flight — the limit is enforced reactively.
+
+```
+User prompt → Model response → session.idle → cost-guard checks → ⚠️ or ⛔ if needed
+```
+
+### Deduplication
+
+Two in-memory `Set` objects track which sessions have already received a warning or been blocked. Each message fires **at most once per session**, regardless of how many subsequent responses occur.
+
+---
+
+## Startup log
+
+When the plugin loads, it prints its active configuration to the console:
+
+```
+[cost-guard] Config loaded from: /home/user/.config/opencode/cost-guard.config.json
+[cost-guard] Active — limit: $2.0000 | warn at: 80% | mode: warn
+```
+
+If no config file is found, you will see:
+
+```
+[cost-guard] No config file found, using defaults.
+[cost-guard] Active — limit: $2.0000 | warn at: 80% | mode: warn
+```
+
+---
+
+## Example messages
+
+**Early warning (at 80% of budget)**
+
+```
+⚠️  **COST WARNING** — 82% of budget used.
+Cost: $1.6400 — Limit: $2.0000 — Remaining: $0.3600
+```
+
+**Limit reached — `warn` mode**
+
+```
+⛔ **COST LIMIT REACHED** — Cost: $2.0031 / $2.0000 (100%)
+
+Configured limit reached. Consider starting a new session or
+update "maxCostUsd" in cost-guard.config.json.
+```
+
+**Limit reached — `block` mode**
+
+```
+⛔ **COST LIMIT REACHED** — Session automatically stopped.
+Cost: $2.0031 / Limit: $2.0000 (100%)
+
+This session will no longer respond to new requests.
+Start a new session to continue working.
+```
+
+---
+
+## Development
+
+```bash
+git clone https://github.com/jjmartres/opencode-cost-guard.git
+cd opencode-cost-guard
+
+make env      # install pinned Node (via asdf) + npm deps
+make build    # compile TypeScript → dist/
+make check    # type-check without emitting files
+make dev      # watch mode — recompiles on save
+make clean    # remove dist/
+```
+
+Run `make` with no arguments to see all available targets. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow including release steps.
+
+### Testing locally
+
+Point OpenCode at your local build instead of the npm package:
+
+```jsonc
+// .opencode/opencode.json  (in a test project)
+{
+  "plugins": ["file:///absolute/path/to/opencode-cost-guard/dist/index.js"]
+}
+```
+
+Then open OpenCode in that project and verify the startup log appears.
+
+---
+
+## Known limitations
+
+- The limit is **reactive**, not preventive. A single expensive response can push the cost over the threshold before the plugin fires.
+- The in-memory session state is reset when OpenCode restarts. A session that was already warned or blocked will be treated as fresh after a restart.
+- For a hard preventive limit, consider routing through a gateway like [Portkey](https://portkey.ai) which supports budget enforcement at the API level.
+
+---
+
+## License
+
+[MIT](./LICENSE)
