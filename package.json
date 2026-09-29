@@ -1,7 +1,7 @@
 {
   "name": "opencode-cost-guard",
   "version": "1.1.1",
-  "description": "OpenCode plugin (V1 and V2) — checks session cost and sends warnings or limit alerts when a configurable threshold is reached",
+  "description": "OpenCode plugin (V1 and V2) — warns when a session's cost nears a configurable limit, and can block prompts past it",
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -31,6 +31,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./tui": {
+      "import": "./dist/tui.js",
+      "types": "./dist/tui.d.ts"
     }
   },
   "files": [
