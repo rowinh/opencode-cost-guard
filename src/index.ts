@@ -1,14 +1,17 @@
 /**
  * opencode-cost-guard
  *
- * OpenCode plugin that monitors session cost in real time and triggers
- * a warning or stop when a configurable threshold is reached.
+ * OpenCode plugin that checks session cost after each response and sends
+ * a warning or limit alert when a configurable threshold is reached.
+ * Supports both the V1 (@opencode-ai/plugin) and V2 (@opencode/plugin) hosts.
  *
  * @see https://github.com/jjmartres/opencode-cost-guard
  */
 
-import type { Plugin } from "@opencode-ai/plugin"
-import type { EventSessionIdle } from "@opencode-ai/sdk"
+// Type-only imports: neither SDK is needed at runtime, so the package loads
+// on either host without pulling in the other's dependencies.
+import type { Plugin as PluginV1, PluginModule } from "@opencode-ai/plugin"
+import type { Plugin as V2 } from "@opencode/plugin"
 import { readFileSync, existsSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
@@ -43,7 +46,7 @@ export interface CostGuardConfig {
   maxCostUsd: number
   /** Percentage of maxCostUsd at which an early warning fires. 0 to disable. Default: 80 */
   warnAtPercent: number
-  /** "warn" sends a warning message; "block" additionally marks the session as stopped. Default: "warn" */
+  /** "warn" sends an alert; "block" also rejects subsequent prompts once the limit is reached (V2 only). Default: "warn" */
   mode: "warn" | "block"
 }
 
@@ -112,108 +115,134 @@ export function loadConfig(projectDirectory: string): CostGuardConfig {
 const fmt = (usd: number) => `$${usd.toFixed(4)}`
 const pct = (cost: number, max: number) => Math.round((cost / max) * 100)
 
-/**
- * Injects a plain-text message into the session chat.
- * Errors are logged and swallowed — a failed notification must never
- * crash the event handler or suppress future cost checks.
- */
-async function sendMessage(
-  client: any,
-  sessionId: string,
-  text: string
-): Promise<void> {
-  try {
-    await client.session.prompt({
-      path: { id: sessionId },
-      body: { noReply: true, parts: [{ type: "text", text }] },
-    })
-  } catch (err) {
-    log.warn(`Failed to send message to session ${sessionId}:`, err)
-  }
-}
-
-// ─── Plugin ───────────────────────────────────────────────────────────────────
-
-export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
-  const cfg = loadConfig(directory)
-
-  // Always printed — one line at startup so the user can confirm active config.
+/** Always printed — one line at startup so the user can confirm active config. */
+function logActive(cfg: CostGuardConfig): void {
   log.info(
     `Active — limit: ${fmt(cfg.maxCostUsd)} | ` +
     `warn at: ${cfg.warnAtPercent}% | mode: ${cfg.mode}` +
     (DEBUG ? " | debug: on" : "")
   )
+}
 
-  // Track per-session state to avoid duplicate messages
-  const warnedSessions  = new Set<string>()
-  const blockedSessions = new Set<string>()
+// ─── Cost check (shared by V1 and V2) ─────────────────────────────────────────
+
+/**
+ * Tracks per-session state and sends each notification at most once.
+ * `send` delivers text to the session without triggering a model response.
+ * `enforced` says whether the host rejects prompts in block mode (V2 only),
+ * so the limit message never promises blocking that isn't happening.
+ */
+function createCostGuard(
+  cfg: CostGuardConfig,
+  enforced: boolean,
+  send: (sessionId: string, text: string) => Promise<unknown>
+) {
+  const warnedSessions = new Set<string>()
+  const limitNotifiedSessions = new Set<string>()
+
+  // Errors are logged and swallowed — a failed notification must never
+  // crash the event handler or suppress future cost checks.
+  async function notify(sessionId: string, text: string): Promise<boolean> {
+    try {
+      await send(sessionId, text)
+      return true
+    } catch (err) {
+      log.warn(`Failed to send message to session ${sessionId}:`, err)
+      return false
+    }
+  }
+
+  return {
+    /** True once the limit alert was delivered; later checks can be skipped. */
+    isDone: (sessionId: string) => limitNotifiedSessions.has(sessionId),
+
+    async check(sessionId: string, cost: number): Promise<void> {
+      const { maxCostUsd, warnAtPercent, mode } = cfg
+      log.debug(`session ${sessionId} — cost: ${fmt(cost)}, limit: ${fmt(maxCostUsd)}`)
+
+      // ── Limit reached ────────────────────────────────────────────────────────
+      if (cost >= maxCostUsd) {
+        const usage = `Cost: ${fmt(cost)} / Limit: ${fmt(maxCostUsd)} (${pct(cost, maxCostUsd)}%)`
+        const msg =
+          mode === "warn"
+            ? [
+                `⛔ **COST LIMIT REACHED** — Cost: ${fmt(cost)} / ${fmt(maxCostUsd)} (${pct(cost, maxCostUsd)}%)`,
+                ``,
+                `Configured limit reached. Consider starting a new session or`,
+                `update "maxCostUsd" in ${CONFIG_FILENAME}.`,
+              ].join("\n")
+            : enforced
+              ? [
+                  `⛔ **COST LIMIT REACHED** — New prompts blocked.`,
+                  usage,
+                  ``,
+                  `New prompts in this session will be rejected.`,
+                  `Start a new session to continue working.`,
+                ].join("\n")
+              : [
+                  `⛔ **COST LIMIT REACHED** — Stop using this session.`,
+                  usage,
+                  ``,
+                  `Prompt blocking requires OpenCode V2; on V1 this is an alert only.`,
+                  `Start a new session to continue working.`,
+                ].join("\n")
+
+        if (await notify(sessionId, msg)) limitNotifiedSessions.add(sessionId)
+        return
+      }
+
+      // ── Early warning (fired once per session) ─────────────────────────────
+      if (
+        warnAtPercent > 0 &&
+        cost >= maxCostUsd * (warnAtPercent / 100) &&
+        !warnedSessions.has(sessionId)
+      ) {
+        if (await notify(sessionId, [
+          `⚠️  **COST WARNING** — ${pct(cost, maxCostUsd)}% of budget used.`,
+          `Cost: ${fmt(cost)} — Limit: ${fmt(maxCostUsd)} — Remaining: ${fmt(maxCostUsd - cost)}`,
+        ].join("\n"))) warnedSessions.add(sessionId)
+      }
+    },
+  }
+}
+
+// ─── OpenCode V1 ──────────────────────────────────────────────────────────────
+
+export const CostGuardPlugin: PluginV1 = async ({ client, directory }) => {
+  const cfg = loadConfig(directory)
+  logActive(cfg)
+
+  const guard = createCostGuard(cfg, false, (sessionId, text) =>
+    client.session.prompt({
+      path: { id: sessionId },
+      body: { noReply: true, parts: [{ type: "text", text }] },
+    })
+  )
 
   return {
     event: async ({ event }) => {
       // Only act after the model has finished responding
       if (event.type !== "session.idle") return
 
-      const sessionId = (event as EventSessionIdle).properties.sessionID
-
+      const sessionId = event.properties.sessionID
       log.debug(`session.idle received — sessionId: ${sessionId ?? "(none)"}`)
 
-      if (!sessionId || blockedSessions.has(sessionId)) return
+      if (!sessionId || guard.isDone(sessionId)) return
 
       try {
         // Sum cost across all assistant messages in the session
         let cost = 0
         try {
           const resp = await client.session.messages({ path: { id: sessionId } })
-          const messages = resp.data ?? []
-          for (const { info } of messages) {
+          for (const { info } of resp.data ?? []) {
             if (info.role === "assistant") cost += info.cost
           }
-          log.debug(`session ${sessionId} — messages: ${messages.length}, cost: ${fmt(cost)}, limit: ${fmt(cfg.maxCostUsd)}`)
         } catch (err) {
           log.warn(`Could not fetch messages for session ${sessionId}:`, err)
           return
         }
 
-        const { maxCostUsd, warnAtPercent, mode } = cfg
-        const warnThreshold = maxCostUsd * (warnAtPercent / 100)
-
-        // ── Limit reached ──────────────────────────────────────────────────────
-        if (cost >= maxCostUsd) {
-          blockedSessions.add(sessionId)
-
-          const msg =
-            mode === "block"
-              ? [
-                  `⛔ **COST LIMIT REACHED** — Session automatically stopped.`,
-                  `Cost: ${fmt(cost)} / Limit: ${fmt(maxCostUsd)} (${pct(cost, maxCostUsd)}%)`,
-                  ``,
-                  `This session will no longer respond to new requests.`,
-                  `Start a new session to continue working.`,
-                ].join("\n")
-              : [
-                  `⛔ **COST LIMIT REACHED** — Cost: ${fmt(cost)} / ${fmt(maxCostUsd)} (${pct(cost, maxCostUsd)}%)`,
-                  ``,
-                  `Configured limit reached. Consider starting a new session or`,
-                  `update "maxCostUsd" in ${CONFIG_FILENAME}.`,
-                ].join("\n")
-
-          await sendMessage(client, sessionId, msg)
-          return
-        }
-
-        // ── Early warning (fired once per session) ─────────────────────────────
-        if (
-          warnAtPercent > 0 &&
-          cost >= warnThreshold &&
-          !warnedSessions.has(sessionId)
-        ) {
-          warnedSessions.add(sessionId)
-
-          await sendMessage(client, sessionId, [
-            `⚠️  **COST WARNING** — ${pct(cost, maxCostUsd)}% of budget used.`,
-            `Cost: ${fmt(cost)} — Limit: ${fmt(maxCostUsd)} — Remaining: ${fmt(maxCostUsd - cost)}`,
-          ].join("\n"))
-        }
+        await guard.check(sessionId, cost)
       } catch (err) {
         // Defensive catch — an unexpected error must not silence future events
         log.error(`Unexpected error in event handler (session ${sessionId}):`, err)
@@ -222,16 +251,85 @@ export const CostGuardPlugin: Plugin = async ({ client, directory }) => {
   }
 }
 
-// PluginModule shape required by the OpenCode plugin loader.
-// The loader reads mod.default.server — a plain-object default export
-// with a server property. Exporting CostGuardPlugin directly as the
-// default causes the legacy fallback to call every named export as a
-// plugin, including loadConfig(), which crashes with a type error.
-// id is mandatory for file:// plugins; for npm plugins it falls back
-// to package.json#name, but having it explicit covers both load paths.
-const plugin: import("@opencode-ai/plugin").PluginModule = {
+// ─── OpenCode V2 ──────────────────────────────────────────────────────────────
+
+async function setupV2(ctx: V2.Context): Promise<V2.Cleanup> {
+  const cfg = loadConfig(ctx.location.directory)
+  logActive(cfg)
+
+  const guard = createCostGuard(cfg, true, (sessionId, text) =>
+    ctx.session.synthetic({ sessionID: sessionId, text, resume: false })
+  )
+  // The idle subscription and the prompt hook can see sessions from other
+  // locations; only apply this project's config to this project's sessions.
+  const ownsSession = (session: { location: { directory: string } }) =>
+    session.location.directory === ctx.location.directory
+
+  const registrations: Array<{ dispose: () => Promise<void> }> = []
+
+  if (cfg.mode === "block") {
+    // Check the durable session total, including after a plugin reload or service restart.
+    registrations.push(await ctx.session.hook("prompt", async (event) => {
+      let session
+      try {
+        session = await ctx.session.get({ sessionID: event.sessionID })
+      } catch (err) {
+        // Fail open: a transient lookup failure must not lock the user out.
+        // The next session.idle check still reports an overspend.
+        log.warn(`Could not check cost for session ${event.sessionID}; allowing prompt:`, err)
+        return
+      }
+      if (!ownsSession(session) || session.cost < cfg.maxCostUsd) return
+      throw new Error(`Cost limit reached (${fmt(session.cost)} / ${fmt(cfg.maxCostUsd)}). Start a new session to continue.`)
+    }))
+  }
+
+  const controller = new AbortController()
+  void (async () => {
+    for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+      // Only act after the model has finished responding.
+      if (event.type !== "session.idle") continue
+      if (event.location && event.location.directory !== ctx.location.directory) continue
+
+      const sessionId = event.data.sessionID
+      log.debug(`session.idle received — sessionId: ${sessionId}`)
+
+      if (!sessionId || guard.isDone(sessionId)) continue
+
+      try {
+        // V2 exposes the cumulative session cost directly; context may be compacted.
+        const session = await ctx.session.get({ sessionID: sessionId })
+        if (!ownsSession(session)) continue
+        await guard.check(sessionId, session.cost)
+      } catch (err) {
+        log.error(`Could not check cost for session ${sessionId}:`, err)
+      }
+    }
+    // The host runs our cleanup (which aborts) before closing streams on unload,
+    // so reaching here without an abort means the stream ended on its own.
+    if (!controller.signal.aborted) log.warn("Event subscription ended; cost alerts are off until the plugin reloads.")
+  })().catch((err) => {
+    if (!controller.signal.aborted) log.error("Event subscription stopped:", err)
+  })
+
+  return async () => {
+    controller.abort()
+    await Promise.all(registrations.map((r) => r.dispose()))
+  }
+}
+
+// ─── Plugin module ────────────────────────────────────────────────────────────
+
+// One default export serves both hosts: the V1 loader reads `server` and
+// ignores `setup`; the V2 loader reads `setup` and ignores `server`.
+// V1 requires a plain-object default export — exporting CostGuardPlugin
+// directly makes its legacy fallback call every named export as a plugin,
+// including loadConfig(). `id` is mandatory for file:// plugins on V1 and
+// for every plugin on V2.
+const plugin = {
   id: "opencode-cost-guard",
   server: CostGuardPlugin,
-}
+  setup: setupV2,
+} satisfies PluginModule & V2.Plugin
 
 export default plugin
