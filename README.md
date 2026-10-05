@@ -9,7 +9,7 @@ An [OpenCode](https://opencode.ai) plugin that checks session cost after each re
 ## Features
 
 - ⚠️ **Early warning** at a configurable percentage of the budget (e.g. 80%)
-- ⛔ **Limit alert** when the session cost exceeds the threshold
+- ⛔ **Limit alert** when the session cost reaches or exceeds the threshold
 - 🛑 **Block mode (V2)** — rejects new prompts in a session once its limit is reached
 - 🔇 **No spam** — each alert fires at most once per session
 - 🤫 **Out of the model's context (V2)** — alerts are TUI toasts, never sent to the model
@@ -57,7 +57,7 @@ The file must be valid JSON — comments are stripped before parsing so `//` and
 
 | Key             | Type              | Default  | Description                                                    |
 | --------------- | ----------------- | -------- | -------------------------------------------------------------- |
-| `maxCostUsd`    | number            | `20.0`   | Cost limit in USD. Alert fires when this is exceeded.          |
+| `maxCostUsd`    | number (> 0)      | `20.0`   | Cost limit in USD. Alert fires when this is reached or exceeded. |
 | `warnAtPercent` | number (0 – 100)  | `80`     | Early warning threshold as a % of `maxCostUsd`. `0` to disable.|
 | `mode`          | `"warn"` \| `"block"` | `"warn"` | `warn` — alerts only. `block` — also rejects new prompts after the limit (V2 only; alert-only on V1). |
 
@@ -102,6 +102,8 @@ In `block` mode, the prompt hook reads the session's stored cost, so blocking su
 ### Deduplication
 
 Each alert fires **at most once per session** while OpenCode is running. The state is in memory, so after a restart an existing session can be alerted again.
+
+An alert is recorded only after delivery succeeds. If delivery fails, a later cost check can retry it. On V2, only sessions in the plugin's project directory use that project's configuration.
 
 ---
 
